@@ -3187,6 +3187,61 @@ test_foo:
         assert "Failed to convert expected value" not in call_args.args[0]
 
 
+def test_uuid_comparison() -> None:
+    # DuckDB returns UUID columns as `uuid.UUID` objects, which must compare equal
+    # to the YAML strings regardless of case, row order or nesting
+    model = _create_model("SELECT id::UUID AS id, {'a': id::UUID} AS s, [id::UUID] AS l FROM raw")
+    context = Context(config=Config(model_defaults=ModelDefaultsConfig(dialect="duckdb")))
+
+    _check_successful_or_raise(
+        _create_test(
+            body=load_yaml(
+                """
+test_foo:
+  model: sushi.foo
+  inputs:
+    raw:
+      - id: 550e8400-e29b-41d4-a716-446655440000
+      - id: 123e4567-e89b-12d3-a456-426614174000
+  outputs:
+    query:
+      - id: 123E4567-E89B-12D3-A456-426614174000
+        s: {a: 123e4567-e89b-12d3-a456-426614174000}
+        l: [123e4567-e89b-12d3-a456-426614174000]
+      - id: 550e8400-e29b-41d4-a716-446655440000
+        s: {a: 550e8400-e29b-41d4-a716-446655440000}
+        l: [550e8400-e29b-41d4-a716-446655440000]
+                """
+            ),
+            test_name="test_foo",
+            model=model,
+            context=context,
+        ).run()
+    )
+
+    result = _create_test(
+        body=load_yaml(
+            """
+test_foo:
+  model: sushi.foo
+  inputs:
+    raw:
+      - id: 550e8400-e29b-41d4-a716-446655440000
+  outputs:
+    query:
+      partial: true
+      rows:
+        - id: 123e4567-e89b-12d3-a456-426614174000
+            """
+        ),
+        test_name="test_foo",
+        model=model,
+        context=context,
+    ).run()
+    assert result is not None and not result.wasSuccessful()
+    assert "Data mismatch" in result.failures[0][1]
+
+
 @use_terminal_console
 def test_disable_test_logging_if_no_tests_found(mocker: MockerFixture, tmp_path: Path) -> None:
     init_example_project(tmp_path, engine_type="duckdb")

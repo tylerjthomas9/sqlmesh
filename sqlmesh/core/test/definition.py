@@ -6,6 +6,7 @@ import datetime
 import threading
 import typing as t
 import unittest
+import uuid
 from collections import Counter
 from contextlib import nullcontext, contextmanager, AbstractContextManager
 from itertools import chain
@@ -306,6 +307,8 @@ class ModelTest(unittest.TestCase):
                 value_type = type(value)
                 if value_type in (datetime.date, datetime.time, datetime.datetime):
                     expected[col] = _parse_expected_datetime_column(expected[col], value_type)
+                elif value_type is uuid.UUID:
+                    expected[col] = expected[col].map(_normalize_uuid_str)
             except Exception as e:
                 from sqlmesh.core.console import get_console
 
@@ -331,7 +334,13 @@ class ModelTest(unittest.TestCase):
                 return tuple(_to_hashable(v) for v in x)
             if isinstance(x, dict):
                 return tuple((k, _to_hashable(v)) for k, v in x.items())
-            return str(x) if isinstance(x, DATETIME_TYPES) or not isinstance(x, t.Hashable) else x
+            if (
+                isinstance(x, DATETIME_TYPES)
+                or isinstance(x, uuid.UUID)
+                or not isinstance(x, t.Hashable)
+            ):
+                return str(x)
+            return x
 
         actual = actual.apply(lambda col: col.map(_to_hashable))
         expected = expected.apply(lambda col: col.map(_to_hashable))
@@ -1061,6 +1070,16 @@ def _raise_error(msg: str, path: Path | None = None) -> None:
     if path:
         raise TestError(f"Failed to run test at {path}:\n{msg}")
     raise TestError(f"Failed to run test:\n{msg}")
+
+
+def _normalize_uuid_str(value: t.Any) -> t.Any:
+    """Canonicalize a UUID string; anything that isn't a valid UUID string is left as is."""
+    if isinstance(value, str):
+        try:
+            return str(uuid.UUID(value))
+        except ValueError:
+            pass
+    return value
 
 
 def _parse_expected_datetime_column(series: pd.Series, target_type: type) -> pd.Series:
